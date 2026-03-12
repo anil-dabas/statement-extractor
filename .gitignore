@@ -70,3 +70,4 @@ coverage.xml
 
 # Uploaded files (temp storage)
 uploads/
+.vercel
