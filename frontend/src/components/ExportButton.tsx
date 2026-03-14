@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { Download } from 'lucide-react';
 import { exportExcel } from '../services/api';
+import type { Transaction } from '../types';
 
 interface ExportButtonProps {
   sessionId: string;
   customerName: string;
+  transactions: Transaction[];
 }
 
-function ExportButton({ sessionId, customerName }: ExportButtonProps) {
+function ExportButton({ sessionId, customerName, transactions }: ExportButtonProps) {
   const [isExporting, setIsExporting] = useState(false);
 
   const handleExport = async () => {
@@ -17,6 +19,7 @@ function ExportButton({ sessionId, customerName }: ExportButtonProps) {
       const blob = await exportExcel({
         session_id: sessionId,
         customer_name: customerName,
+        transactions: transactions,
       });
 
       // Create download link

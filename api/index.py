@@ -148,6 +148,7 @@ class handler(BaseHTTPRequestHandler):
         session_id = str(uuid.uuid4())
         session_dir = get_session_dir(session_id)
         file_infos = []
+        all_transactions = []
 
         import re
         parts = body.split(f'--{boundary}'.encode())
@@ -175,7 +176,7 @@ class handler(BaseHTTPRequestHandler):
                 bank_type, _ = BankDetector.detect_from_pdf(str(file_path))
                 customer_name = extract_customer_name_from_pdf(str(file_path), bank_type) if bank_type else ""
 
-                file_infos.append({
+                file_info = {
                     "id": file_id,
                     "filename": filename,
                     "bank_type": bank_type,
@@ -183,16 +184,47 @@ class handler(BaseHTTPRequestHandler):
                     "status": "pending" if bank_type else "error",
                     "error_message": None if bank_type else "Could not detect bank type",
                     "selected": True
-                })
+                }
+
+                # Parse immediately if bank type detected
+                if bank_type:
+                    try:
+                        parser = get_parser(bank_type)
+                        transactions = parser.parse(str(file_path))
+                        for t in transactions:
+                            if customer_name:
+                                t.customer_name = customer_name
+                        all_transactions.extend(transactions)
+                        file_info["status"] = "parsed"
+                    except Exception as e:
+                        file_info["status"] = "error"
+                        file_info["error_message"] = str(e)
+
+                file_infos.append(file_info)
+
+        # Calculate summary
+        bank_in = [t for t in all_transactions if t.transaction_type == "in"]
+        bank_out = [t for t in all_transactions if t.transaction_type == "out"]
 
         session_data = {
             "files": {f["id"]: f for f in file_infos},
             "temp_dir": str(session_dir),
-            "transactions": []
+            "transactions": [t.to_dict() for t in all_transactions]
         }
         save_session(session_id, session_data)
 
-        self._send_json({"files": file_infos, "session_id": session_id})
+        self._send_json({
+            "files": file_infos,
+            "session_id": session_id,
+            "transactions": [t.to_dict() for t in all_transactions],
+            "summary": {
+                "bank_in_count": len(bank_in),
+                "bank_out_count": len(bank_out),
+                "total_in": str(sum(t.amount for t in bank_in)),
+                "total_out": str(sum(t.amount for t in bank_out)),
+                "currencies": list(set(t.currency for t in all_transactions))
+            }
+        })
 
     def _handle_parse(self, session_id, body):
         session = load_session(session_id)
@@ -255,25 +287,32 @@ class handler(BaseHTTPRequestHandler):
     def _handle_export(self, body):
         session_id = body.get("session_id")
         customer_name = body.get("customer_name", "")
+        transactions_data = body.get("transactions", [])
 
-        session = load_session(session_id)
-        if not session:
-            self._send_error("Session not found", 404)
-            return
-
-        transactions = [Transaction.from_dict(t) for t in session.get("transactions", [])]
+        # Try to load from session first, fall back to request body
+        if transactions_data:
+            transactions = [Transaction.from_dict(t) for t in transactions_data]
+        else:
+            session = load_session(session_id)
+            if not session:
+                self._send_error("Session not found and no transactions provided", 404)
+                return
+            transactions = [Transaction.from_dict(t) for t in session.get("transactions", [])]
 
         if not transactions:
             self._send_error("No transactions to export", 400)
             return
 
         for t in transactions:
-            t.customer_name = customer_name
+            if customer_name:
+                t.customer_name = customer_name
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"accounting_queries_{customer_name}_{timestamp}.xlsx" if customer_name else f"accounting_queries_{timestamp}.xlsx"
 
-        temp_dir = Path(session["temp_dir"])
+        # Use a temp file for export
+        temp_dir = TEMP_DIR / str(uuid.uuid4())
+        temp_dir.mkdir(parents=True, exist_ok=True)
         output_path = temp_dir / filename
 
         exporter = ExcelExporter()
@@ -282,7 +321,9 @@ class handler(BaseHTTPRequestHandler):
         with open(output_path, "rb") as f:
             content = f.read()
 
-        import base64
+        # Cleanup temp file
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
         self.send_response(200)
         self.send_header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         self.send_header('Content-Disposition', f'attachment; filename="{filename}"')

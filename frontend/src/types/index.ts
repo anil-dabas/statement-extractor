@@ -11,6 +11,8 @@ export interface FileInfo {
 export interface UploadResponse {
   files: FileInfo[];
   session_id: string;
+  transactions?: Transaction[];
+  summary?: TransactionSummary;
 }
 
 export interface Transaction {
@@ -50,4 +52,5 @@ export interface ExportRequest {
   session_id: string;
   customer_name: string;
   year?: number;
+  transactions?: Transaction[];
 }

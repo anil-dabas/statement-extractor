@@ -27,6 +27,17 @@ function App() {
       const response = await uploadFiles(selectedFiles);
       setSessionId(response.session_id);
       setFiles(response.files);
+
+      // Store parsed transactions from upload response
+      if (response.transactions && response.transactions.length > 0) {
+        const bankIn = response.transactions.filter((t: Transaction) => t.transaction_type === 'in');
+        const bankOut = response.transactions.filter((t: Transaction) => t.transaction_type === 'out');
+        setTransactions({ bank_in: bankIn, bank_out: bankOut });
+        if (response.summary) {
+          setSummary(response.summary);
+        }
+      }
+
       setStep('preview');
     } catch (err) {
       setError('Failed to upload files. Please try again.');
@@ -49,32 +60,30 @@ function App() {
     setError(null);
 
     try {
-      const fileIds = files
-        .filter((f) => f.selected && f.bank_type && f.status !== 'error')
-        .map((f) => f.id);
+      const validFiles = files.filter((f) => f.selected && f.bank_type && f.status !== 'error');
 
-      if (fileIds.length === 0) {
+      if (validFiles.length === 0) {
         setError('Please select at least one valid file to process.');
         setIsLoading(false);
         return;
       }
 
-      await parseFiles(sessionId, fileIds, customerName);
+      // Transactions are already parsed during upload, just proceed to export
+      // Filter transactions based on selected files if needed
+      if (transactions.bank_in.length === 0 && transactions.bank_out.length === 0) {
+        setError('No transactions found. Please re-upload the files.');
+        setIsLoading(false);
+        return;
+      }
 
-      const preview = await getPreview(sessionId);
-      setTransactions({
-        bank_in: preview.bank_in,
-        bank_out: preview.bank_out,
-      });
-      setSummary(preview.summary);
       setStep('export');
     } catch (err) {
-      setError('Failed to parse files. Please check the file format.');
+      setError('Failed to process files. Please try again.');
       console.error(err);
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId, files, customerName]);
+  }, [sessionId, files, transactions]);
 
   const handleReset = useCallback(() => {
     setSessionId(null);
@@ -223,6 +232,7 @@ function App() {
                   <ExportButton
                     sessionId={sessionId}
                     customerName={customerName}
+                    transactions={[...transactions.bank_in, ...transactions.bank_out]}
                   />
                 </div>
               </div>
