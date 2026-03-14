@@ -4,7 +4,7 @@ import StatementList from './components/StatementList';
 import TransactionPreview from './components/TransactionPreview';
 import ExportButton from './components/ExportButton';
 import type { FileInfo, Transaction, TransactionSummary } from './types';
-import { uploadFiles, parseFiles, getPreview } from './services/api';
+import { uploadFiles } from './services/api';
 
 function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
