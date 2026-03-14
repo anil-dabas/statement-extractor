@@ -18,7 +18,24 @@ from parsers import get_parser
 from exporters.excel_exporter import ExcelExporter
 
 TEMP_DIR = Path('/tmp/bank_statement_converter')
-sessions = {}
+
+
+def load_session(session_id):
+    """Load session data from file."""
+    session_file = TEMP_DIR / session_id / "session.json"
+    if session_file.exists():
+        with open(session_file, 'r') as f:
+            return json.load(f)
+    return None
+
+
+def save_session(session_id, session_data):
+    """Save session data to file."""
+    session_dir = TEMP_DIR / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    session_file = session_dir / "session.json"
+    with open(session_file, 'w') as f:
+        json.dump(session_data, f)
 
 NATURE_OPTIONS = [
     "Salary", "Rental Income", "Investment Income", "Business Income",
@@ -82,12 +99,11 @@ class handler(BaseHTTPRequestHandler):
 
         if path.startswith('/api/session/'):
             session_id = path.split('/')[-1]
-            if session_id in sessions:
-                session = sessions[session_id]
+            session = load_session(session_id)
+            if session:
                 temp_dir = Path(session["temp_dir"])
                 if temp_dir.exists():
                     shutil.rmtree(temp_dir)
-                del sessions[session_id]
                 self._send_json({"status": "cleaned"})
             else:
                 self._send_error("Session not found", 404)
@@ -169,20 +185,21 @@ class handler(BaseHTTPRequestHandler):
                     "selected": True
                 })
 
-        sessions[session_id] = {
+        session_data = {
             "files": {f["id"]: f for f in file_infos},
             "temp_dir": str(session_dir),
             "transactions": []
         }
+        save_session(session_id, session_data)
 
         self._send_json({"files": file_infos, "session_id": session_id})
 
     def _handle_parse(self, session_id, body):
-        if session_id not in sessions:
+        session = load_session(session_id)
+        if not session:
             self._send_error("Session not found", 404)
             return
 
-        session = sessions[session_id]
         temp_dir = Path(session["temp_dir"])
         all_transactions = []
 
@@ -218,6 +235,7 @@ class handler(BaseHTTPRequestHandler):
                 session["files"][file_id]["error_message"] = str(e)
 
         session["transactions"] = [t.to_dict() for t in all_transactions]
+        save_session(session_id, session)
 
         bank_in = [t for t in all_transactions if t.transaction_type == "in"]
         bank_out = [t for t in all_transactions if t.transaction_type == "out"]
@@ -238,11 +256,11 @@ class handler(BaseHTTPRequestHandler):
         session_id = body.get("session_id")
         customer_name = body.get("customer_name", "")
 
-        if session_id not in sessions:
+        session = load_session(session_id)
+        if not session:
             self._send_error("Session not found", 404)
             return
 
-        session = sessions[session_id]
         transactions = [Transaction.from_dict(t) for t in session.get("transactions", [])]
 
         if not transactions:
